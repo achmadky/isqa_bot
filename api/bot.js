@@ -13,6 +13,13 @@ export default async function handler(req, res) {
   const update = req.body;
   console.log("📩 Incoming update:", JSON.stringify(update, null, 2));
 
+  // Always log topic id if available
+  if (update.message?.message_thread_id) {
+    console.log(`🧵 Message came from topic ID: ${update.message.message_thread_id}`);
+  } else {
+    console.log("💬 Message came from main chat (no topic).");
+  }
+
   try {
     // Detect new member join
     if (update.message?.new_chat_members) {
@@ -30,14 +37,13 @@ export default async function handler(req, res) {
         parse_mode: "Markdown"
       });
 
-      console.log("📨 Rules message sent to topic.");
+      console.log(`📨 Rules message sent to topic ID: ${RULES_TOPIC_ID}`);
 
       // Set a timeout to kick after 1 minute if no reaction
       setTimeout(async () => {
         console.log(`⏳ 1 minute passed, checking reaction for ${user.id}...`);
-        // Since we are not storing data, we can't check actual reactions without DB.
-        // This example assumes no reaction and kicks the user.
 
+        // Without DB or reaction tracking, we'll assume no reaction
         await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/kickChatMember`, {
           chat_id: CHAT_ID,
           user_id: user.id
