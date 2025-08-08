@@ -2,9 +2,47 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
 const RULES_TOPIC_ID = process.env.RULES_TOPIC_ID;
 
-const verificationTimeoutMs = Number(process.env.VERIFICATION_TIMEOUT_SECONDS ?? "15") * 1000;
+async function restrictUser(chatId, userId) {
+  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/restrictChatMember`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      user_id: userId,
+      permissions: {
+        can_send_messages: false,
+        can_send_media_messages: false,
+        can_send_polls: false,
+        can_send_other_messages: false,
+        can_add_web_page_previews: false,
+        can_change_info: false,
+        can_invite_users: false,
+        can_pin_messages: false,
+      },
+    }),
+  });
+}
 
-const pendingVerifications = new Map();
+async function unrestrictUser(chatId, userId) {
+  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/restrictChatMember`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      user_id: userId,
+      permissions: {
+        can_send_messages: true,
+        can_send_media_messages: true,
+        can_send_polls: true,
+        can_send_other_messages: true,
+        can_add_web_page_previews: true,
+        can_change_info: false,
+        can_invite_users: true,
+        can_pin_messages: false,
+      },
+    }),
+  });
+}
 
 export default async function handler(req, res) {
   try {
@@ -16,33 +54,14 @@ export default async function handler(req, res) {
 
         console.log(`[User Joined] id=${member.id}, name=${member.first_name}`);
 
+        // Restrict new user
+        await restrictUser(CHAT_ID, member.id);
+
         await sendMessage(
           CHAT_ID,
-          `👋 Welcome ${member.first_name}! Please reply with "I Agree" within ${verificationTimeoutMs / 1000} seconds to verify.`,
+          `👋 Welcome ${member.first_name}! Please reply with "I Agree" to verify and gain full access.`,
           RULES_TOPIC_ID
         );
-
-        pendingVerifications.set(member.id, Date.now());
-
-        setTimeout(async () => {
-          if (pendingVerifications.has(member.id)) {
-            console.log(`[Verification Failed] id=${member.id}, name=${member.first_name} - kicking user`);
-
-            try {
-              await kickUser(CHAT_ID, member.id);
-
-              await sendMessage(
-                CHAT_ID,
-                `🚫 ${member.first_name} was removed for not verifying in time.`,
-                RULES_TOPIC_ID
-              );
-
-              pendingVerifications.delete(member.id);
-            } catch (err) {
-              console.error(`[Kick Error] id=${member.id}, error:`, err.message);
-            }
-          }
-        }, verificationTimeoutMs);
       }
     }
 
@@ -50,10 +69,11 @@ export default async function handler(req, res) {
       const userId = body.message.from.id;
       const text = body.message.text.trim().toLowerCase();
 
-      if (text === "i agree" && pendingVerifications.has(userId)) {
-        pendingVerifications.delete(userId);
+      if (text === "i agree") {
+        console.log(`[Verification Attempt] id=${userId}`);
 
-        console.log(`[Verified] id=${userId}, name=${body.message.from.first_name}`);
+        // Unrestrict user
+        await unrestrictUser(CHAT_ID, userId);
 
         await sendMessage(
           CHAT_ID,
@@ -88,39 +108,5 @@ async function sendMessage(chatId, text, messageThreadId) {
   if (!response.ok) {
     const errText = await response.text();
     console.error("[Send Message Failed]:", errText);
-  }
-}
-
-async function kickUser(chatId, userId) {
-  // Ban the user (kick)
-  let response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/banChatMember`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      user_id: userId,
-      revoke_messages: true,
-    }),
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Failed to ban user: ${errText}`);
-  }
-
-  // Immediately unban to allow rejoin
-  response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/unbanChatMember`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      user_id: userId,
-      only_if_banned: true,
-    }),
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Failed to unban user: ${errText}`);
   }
 }
