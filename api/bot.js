@@ -2,8 +2,9 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
 const RULES_TOPIC_ID = process.env.RULES_TOPIC_ID;
 
+const verifiedUsers = new Set();
+
 async function restrictUser(chatId, userId) {
-  // restrict user as before (no send message permissions)
   await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/restrictChatMember`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -25,7 +26,6 @@ async function restrictUser(chatId, userId) {
 }
 
 async function unrestrictUser(chatId, userId) {
-  // unrestrict user as before (restore send message permissions)
   await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/restrictChatMember`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -57,7 +57,7 @@ async function sendMessageWithButton(chatId, text, messageThreadId, userId) {
         [
           {
             text: "✅ Agree",
-            callback_data: `verify_${userId}`, // include userId for verification check
+            callback_data: `verify_${userId}`,
           },
         ],
       ],
@@ -74,6 +74,39 @@ async function sendMessageWithButton(chatId, text, messageThreadId, userId) {
     const errText = await response.text();
     console.error("[Send Message Failed]:", errText);
   }
+}
+
+async function sendMessage(chatId, text, messageThreadId) {
+  const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+
+  const payload = {
+    chat_id: chatId,
+    text,
+    message_thread_id: messageThreadId,
+  };
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    console.error("[Send Message Failed]:", errText);
+  }
+}
+
+async function answerCallback(callbackQueryId, text, showAlert = false) {
+  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      callback_query_id: callbackQueryId,
+      text,
+      show_alert: showAlert,
+    }),
+  });
 }
 
 export default async function handler(req, res) {
@@ -104,36 +137,24 @@ export default async function handler(req, res) {
       const fromUser = body.callback_query.from;
 
       if (callbackData === `verify_${fromUser.id}`) {
-        // Unrestrict user
-        await unrestrictUser(CHAT_ID, fromUser.id);
+        if (verifiedUsers.has(fromUser.id)) {
+          // Already verified
+          await answerCallback(body.callback_query.id, "You are already verified.");
+        } else {
+          // Verify user
+          await unrestrictUser(CHAT_ID, fromUser.id);
+          verifiedUsers.add(fromUser.id);
 
-        // Notify in chat or answer callback query
-        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            callback_query_id: body.callback_query.id,
-            text: "You have been verified! 🎉",
-            show_alert: false,
-          }),
-        });
+          await answerCallback(body.callback_query.id, "You have been verified! 🎉");
 
-        await sendMessage(
-          CHAT_ID,
-          `✅ ${fromUser.first_name} has verified successfully!`,
-          RULES_TOPIC_ID
-        );
+          await sendMessage(
+            CHAT_ID,
+            `✅ ${fromUser.first_name} has verified successfully!`,
+            RULES_TOPIC_ID
+          );
+        }
       } else {
-        // Optionally answer other callback queries with no action
-        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            callback_query_id: body.callback_query.id,
-            text: "Invalid or expired verification.",
-            show_alert: true,
-          }),
-        });
+        await answerCallback(body.callback_query.id, "Invalid or expired verification.", true);
       }
     }
 
@@ -141,26 +162,5 @@ export default async function handler(req, res) {
   } catch (error) {
     console.error("[Handler Error]:", error);
     res.status(500).send("Error");
-  }
-}
-
-async function sendMessage(chatId, text, messageThreadId) {
-  const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
-
-  const payload = {
-    chat_id: chatId,
-    text,
-    message_thread_id: messageThreadId,
-  };
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    console.error("[Send Message Failed]:", errText);
   }
 }
