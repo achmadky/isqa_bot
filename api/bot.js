@@ -3,31 +3,31 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID = process.env.CHAT_ID; // your group chat ID, e.g., -1001234567890
 const RULES_TOPIC_ID = process.env.RULES_TOPIC_ID; // your topic/thread ID inside the group
 
-const verificationTimeoutMs = 60 * 1000; // 1 minute
+const verificationTimeoutMs = 10 * 1000; // 1 minute
 const pendingVerifications = new Map();
 
 export default async function handler(req, res) {
   try {
     const body = req.body;
 
-    // New users joined
     if (body.message?.new_chat_members) {
       for (const member of body.message.new_chat_members) {
         if (member.is_bot) continue;
 
-        // Send verification request message in rules topic
+        console.log(`[User Joined] id=${member.id}, name=${member.first_name}`);
+
         await sendMessage(
           CHAT_ID,
           `👋 Welcome ${member.first_name}! Please reply with "I Agree" within 1 minute to verify.`,
           RULES_TOPIC_ID
         );
 
-        // Track pending verification
         pendingVerifications.set(member.id, Date.now());
 
-        // Schedule kick if no verification within time limit
         setTimeout(async () => {
           if (pendingVerifications.has(member.id)) {
+            console.log(`[Verification Failed] id=${member.id}, name=${member.first_name} - kicking user`);
+
             try {
               await kickUser(CHAT_ID, member.id);
 
@@ -39,20 +39,21 @@ export default async function handler(req, res) {
 
               pendingVerifications.delete(member.id);
             } catch (err) {
-              console.error("Error kicking user:", err.message);
+              console.error(`[Kick Error] id=${member.id}, error:`, err.message);
             }
           }
         }, verificationTimeoutMs);
       }
     }
 
-    // Handle user messages to verify
     if (body.message?.text) {
       const userId = body.message.from.id;
       const text = body.message.text.trim().toLowerCase();
 
       if (text === "i agree" && pendingVerifications.has(userId)) {
         pendingVerifications.delete(userId);
+
+        console.log(`[Verified] id=${userId}, name=${body.message.from.first_name}`);
 
         await sendMessage(
           CHAT_ID,
@@ -64,7 +65,7 @@ export default async function handler(req, res) {
 
     res.status(200).send("OK");
   } catch (error) {
-    console.error("Handler error:", error);
+    console.error("[Handler Error]:", error);
     res.status(500).send("Error");
   }
 }
@@ -86,7 +87,7 @@ async function sendMessage(chatId, text, messageThreadId) {
 
   if (!response.ok) {
     const errText = await response.text();
-    console.error("Failed to send message:", errText);
+    console.error("[Send Message Failed]:", errText);
   }
 }
 
