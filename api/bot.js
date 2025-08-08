@@ -1,56 +1,48 @@
 // api/bot.js
-import axios from "axios";
-
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const CHAT_ID = process.env.CHAT_ID; // Group ID (e.g., -100123456789)
-const RULES_TOPIC_ID = process.env.RULES_TOPIC_ID; // Topic ID in group
-
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).send("Method Not Allowed");
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const update = req.body;
-  console.log("📩 Incoming update:", JSON.stringify(update, null, 2));
-
   try {
-    // Detect when a new member joins
-    if (update.message?.new_chat_members?.length > 0) {
-      const user = update.message.new_chat_members[0];
+    const { message } = req.body;
 
-      const mention = `[${user.first_name}](tg://user?id=${user.id})`;
-      const rulesText = `${mention}, please read and react to the rules within 1 minute or you'll be removed. ✅`;
-
-      // Send rules message to the topic
-      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-        chat_id: CHAT_ID,
-        message_thread_id: RULES_TOPIC_ID ? Number(RULES_TOPIC_ID) : undefined,
-        text: rulesText,
-        parse_mode: "Markdown"
-      });
-
-      console.log(`📨 Rules message sent for ${user.id} in topic ${RULES_TOPIC_ID || "(no topic)"}`);
-
-      // Wait 1 minute, then kick
-      setTimeout(async () => {
-        console.log(`⏳ 1 minute passed, kicking user ${user.id} (no reaction check implemented).`);
-
-        try {
-          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/kickChatMember`, {
-            chat_id: CHAT_ID,
-            user_id: user.id
-          });
-
-          console.log(`💥 User ${user.id} kicked.`);
-        } catch (kickErr) {
-          console.error(`❌ Failed to kick ${user.id}:`, kickErr.response?.data || kickErr.message);
-        }
-      }, 60 * 1000);
+    if (!message) {
+      return res.status(400).json({ error: 'Message is required' });
     }
 
-    res.status(200).send("OK");
-  } catch (error) {
-    console.error("❌ Error in handler:", error.response?.data || error.message);
-    res.status(500).send("Error");
+    const BOT_TOKEN = process.env.BOT_TOKEN;
+
+    // Replace with your group or channel chat_id
+    const CHAT_ID = process.env.CHAT_ID; 
+
+    if (!BOT_TOKEN || !CHAT_ID) {
+      return res.status(500).json({ error: 'BOT_TOKEN or CHAT_ID missing in environment variables' });
+    }
+
+    const telegramUrl = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+
+    const tgRes = await fetch(telegramUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        chat_id: CHAT_ID,
+        text: message
+      })
+    });
+
+    const data = await tgRes.json();
+
+    if (!data.ok) {
+      return res.status(500).json({ error: 'Failed to send message', details: data });
+    }
+
+    return res.status(200).json({ success: true, result: data.result });
+
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Internal server error' });
   }
 }
