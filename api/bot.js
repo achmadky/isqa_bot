@@ -1,61 +1,58 @@
-// api/bot.js
-import axios from "axios";
-
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const CHAT_ID = process.env.CHAT_ID; // group id, e.g., -100123456789
-const RULES_TOPIC_ID = process.env.RULES_TOPIC_ID; // topic id inside the group
+// /api/bot.js
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).send("Method Not Allowed");
-  }
+  if (req.method === 'POST') {
+    console.log("📩 Incoming update:", JSON.stringify(req.body, null, 2));
 
-  const update = req.body;
-  console.log("📩 Incoming update:", JSON.stringify(update, null, 2));
+    const msg = req.body.message;
 
-  // Always log topic id if available
-  if (update.message?.message_thread_id) {
-    console.log(`🧵 Message came from topic ID: ${update.message.message_thread_id}`);
-  } else {
-    console.log("💬 Message came from main chat (no topic).");
-  }
+    if (msg) {
+      const chatId = msg.chat?.id;
+      const topicId = msg.message_thread_id || null;
+      const text = msg.text || '';
 
-  try {
-    // Detect new member join
-    if (update.message?.new_chat_members) {
-      const user = update.message.new_chat_members[0];
-      console.log(`👤 New member joined: ${user.username || user.first_name} (${user.id})`);
+      console.log(`💬 Chat ID: ${chatId}`);
+      if (topicId) {
+        console.log(`🧵 Topic ID: ${topicId}`);
+      } else {
+        console.log(`⚠️ No Topic ID found (message not in a topic)`);
+      }
+      console.log(`📝 Message text: ${text}`);
 
-      // Send rules message in topic and mention user
-      const mention = `[${user.first_name}](tg://user?id=${user.id})`;
-      const rulesText = `${mention}, please read and react to the rules within 1 minute or you'll be removed. ✅`;
-
-      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-        chat_id: CHAT_ID,
-        message_thread_id: RULES_TOPIC_ID,
-        text: rulesText,
-        parse_mode: "Markdown"
-      });
-
-      console.log(`📨 Rules message sent to topic ID: ${RULES_TOPIC_ID}`);
-
-      // Set a timeout to kick after 1 minute if no reaction
-      setTimeout(async () => {
-        console.log(`⏳ 1 minute passed, checking reaction for ${user.id}...`);
-
-        // Without DB or reaction tracking, we'll assume no reaction
-        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/kickChatMember`, {
-          chat_id: CHAT_ID,
-          user_id: user.id
-        });
-
-        console.log(`💥 User ${user.id} kicked for not reacting.`);
-      }, 60 * 1000);
+      // If you want to send reply to RULES_TOPIC_ID from env
+      if (process.env.RULES_TOPIC_ID && chatId && text.toLowerCase() === '/rules') {
+        const replyText = "📜 Here are the rules for this group...";
+        await sendMessage(chatId, replyText, process.env.RULES_TOPIC_ID);
+      }
     }
 
-    res.status(200).send("OK");
-  } catch (error) {
-    console.error("❌ Error:", error.response?.data || error.message);
-    res.status(500).send("Error");
+    res.status(200).send('ok');
+  } else {
+    res.status(200).send('Bot running...');
+  }
+}
+
+// Helper function to send a message to a specific topic
+async function sendMessage(chatId, text, topicId) {
+  const url = `https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`;
+
+  const payload = {
+    chat_id: chatId,
+    text: text,
+    message_thread_id: Number(topicId)
+  };
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await res.json();
+    console.log("📤 Sent message:", data);
+    return data;
+  } catch (err) {
+    console.error("❌ Error sending message:", err);
   }
 }
