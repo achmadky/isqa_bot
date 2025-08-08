@@ -3,6 +3,7 @@ const CHAT_ID = process.env.CHAT_ID;
 const RULES_TOPIC_ID = process.env.RULES_TOPIC_ID;
 
 async function restrictUser(chatId, userId) {
+  // restrict user as before (no send message permissions)
   await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/restrictChatMember`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -24,6 +25,7 @@ async function restrictUser(chatId, userId) {
 }
 
 async function unrestrictUser(chatId, userId) {
+  // unrestrict user as before (restore send message permissions)
   await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/restrictChatMember`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -44,42 +46,94 @@ async function unrestrictUser(chatId, userId) {
   });
 }
 
+async function sendMessageWithButton(chatId, text, messageThreadId, userId) {
+  const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+  const payload = {
+    chat_id: chatId,
+    text,
+    message_thread_id: messageThreadId,
+    reply_markup: {
+      inline_keyboard: [
+        [
+          {
+            text: "✅ Agree",
+            callback_data: `verify_${userId}`, // include userId for verification check
+          },
+        ],
+      ],
+    },
+  };
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    console.error("[Send Message Failed]:", errText);
+  }
+}
+
 export default async function handler(req, res) {
   try {
     const body = req.body;
 
+    // New user joined
     if (body.message?.new_chat_members) {
       for (const member of body.message.new_chat_members) {
         if (member.is_bot) continue;
 
         console.log(`[User Joined] id=${member.id}, name=${member.first_name}`);
 
-        // Restrict new user
         await restrictUser(CHAT_ID, member.id);
 
-        await sendMessage(
+        await sendMessageWithButton(
           CHAT_ID,
-          `👋 Welcome ${member.first_name}! Please reply with "I Agree" to verify and gain full access.`,
-          RULES_TOPIC_ID
+          `👋 Welcome ${member.first_name}! Please tap the ✅ Agree button below to verify.`,
+          RULES_TOPIC_ID,
+          member.id
         );
       }
     }
 
-    if (body.message?.text) {
-      const userId = body.message.from.id;
-      const text = body.message.text.trim().toLowerCase();
+    // Handle callback queries (button clicks)
+    if (body.callback_query) {
+      const callbackData = body.callback_query.data;
+      const fromUser = body.callback_query.from;
 
-      if (text === "i agree") {
-        console.log(`[Verification Attempt] id=${userId}`);
-
+      if (callbackData === `verify_${fromUser.id}`) {
         // Unrestrict user
-        await unrestrictUser(CHAT_ID, userId);
+        await unrestrictUser(CHAT_ID, fromUser.id);
+
+        // Notify in chat or answer callback query
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            callback_query_id: body.callback_query.id,
+            text: "You have been verified! 🎉",
+            show_alert: false,
+          }),
+        });
 
         await sendMessage(
           CHAT_ID,
-          `✅ ${body.message.from.first_name} has verified successfully!`,
+          `✅ ${fromUser.first_name} has verified successfully!`,
           RULES_TOPIC_ID
         );
+      } else {
+        // Optionally answer other callback queries with no action
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            callback_query_id: body.callback_query.id,
+            text: "Invalid or expired verification.",
+            show_alert: true,
+          }),
+        });
       }
     }
 
