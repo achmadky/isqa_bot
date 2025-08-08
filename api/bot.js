@@ -1,9 +1,9 @@
-// api/bot.js
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const CHAT_ID = process.env.CHAT_ID; // your group chat ID, e.g., -1001234567890
-const RULES_TOPIC_ID = process.env.RULES_TOPIC_ID; // your topic/thread ID inside the group
+const CHAT_ID = process.env.CHAT_ID;
+const RULES_TOPIC_ID = process.env.RULES_TOPIC_ID;
 
-const verificationTimeoutMs = 10 * 1000; // 1 minute
+const verificationTimeoutMs = Number(process.env.VERIFICATION_TIMEOUT_SECONDS ?? "15") * 1000;
+
 const pendingVerifications = new Map();
 
 export default async function handler(req, res) {
@@ -18,7 +18,7 @@ export default async function handler(req, res) {
 
         await sendMessage(
           CHAT_ID,
-          `👋 Welcome ${member.first_name}! Please reply with "I Agree" within 1 minute to verify.`,
+          `👋 Welcome ${member.first_name}! Please reply with "I Agree" within ${verificationTimeoutMs / 1000} seconds to verify.`,
           RULES_TOPIC_ID
         );
 
