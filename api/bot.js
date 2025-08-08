@@ -1,48 +1,96 @@
 // api/bot.js
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const CHAT_ID = process.env.CHAT_ID;
+const RULES_TOPIC_ID = process.env.RULES_TOPIC_ID;
+
+const verificationTimeoutMs = 60 * 1000; // 1 minute
+
+// In-memory store for tracking unverified users (simple demo; reset on deploy)
+const pendingVerifications = new Map();
+
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-
   try {
-    const { message } = req.body;
+    const body = req.body;
 
-    if (!message) {
-      return res.status(400).json({ error: 'Message is required' });
+    // New member joins
+    if (body.message?.new_chat_members) {
+      for (const member of body.message.new_chat_members) {
+        if (member.is_bot) continue;
+
+        // Send verification message in rules topic
+        await sendMessage(
+          CHAT_ID,
+          `👋 Welcome ${member.first_name}!\nPlease reply with "I Agree" within 1 minute to verify.`,
+          RULES_TOPIC_ID
+        );
+
+        // Add user to pending verifications
+        pendingVerifications.set(member.id, Date.now());
+
+        // Schedule kick if no verification
+        setTimeout(async () => {
+          if (pendingVerifications.has(member.id)) {
+            try {
+              await kickUser(CHAT_ID, member.id);
+              await sendMessage(CHAT_ID, `🚫 ${member.first_name} was removed for not verifying in time.`, RULES_TOPIC_ID);
+              pendingVerifications.delete(member.id);
+            } catch (err) {
+              console.error("Kick failed:", err);
+            }
+          }
+        }, verificationTimeoutMs);
+      }
     }
 
-    const BOT_TOKEN = process.env.BOT_TOKEN;
+    // Handle user messages (for verification)
+    if (body.message?.text) {
+      const userId = body.message.from.id;
+      const text = body.message.text.trim().toLowerCase();
 
-    // Replace with your group or channel chat_id
-    const CHAT_ID = process.env.CHAT_ID; 
-
-    if (!BOT_TOKEN || !CHAT_ID) {
-      return res.status(500).json({ error: 'BOT_TOKEN or CHAT_ID missing in environment variables' });
+      if (text === "i agree" && pendingVerifications.has(userId)) {
+        pendingVerifications.delete(userId);
+        await sendMessage(CHAT_ID, `✅ ${body.message.from.first_name} has verified successfully!`, RULES_TOPIC_ID);
+      }
     }
 
-    const telegramUrl = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
-
-    const tgRes = await fetch(telegramUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        chat_id: CHAT_ID,
-        text: message
-      })
-    });
-
-    const data = await tgRes.json();
-
-    if (!data.ok) {
-      return res.status(500).json({ error: 'Failed to send message', details: data });
-    }
-
-    return res.status(200).json({ success: true, result: data.result });
-
+    res.status(200).send("OK");
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ error: 'Internal server error' });
+    res.status(500).send("Error");
+  }
+}
+
+async function sendMessage(chatId, text, messageThreadId) {
+  const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+  const payload = {
+    chat_id: chatId,
+    text,
+    message_thread_id: messageThreadId,
+  };
+
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!resp.ok) {
+    console.error("Failed to send message", await resp.text());
+  }
+}
+
+async function kickUser(chatId, userId) {
+  const url = `https://api.telegram.org/bot${BOT_TOKEN}/kickChatMember`;
+  const payload = { chat_id: chatId, user_id: userId };
+
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`Failed to kick user: ${text}`);
   }
 }
