@@ -1,62 +1,37 @@
-import { Telegraf } from 'telegraf';
+import TelegramBot from "node-telegram-bot-api";
 
-const bot = new Telegraf(process.env.BOT_TOKEN);
-const pendingUsers = new Map();
+const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 
-bot.on('new_chat_members', async (ctx) => {
-  const userId = ctx.message.new_chat_members[0].id;
-  const firstName = ctx.message.new_chat_members[0].first_name;
+// The group/chat ID where your rules are posted
+const CHAT_ID = process.env.CHAT_ID; 
+// The topic ID for the rules (thread ID in supergroup)
+const RULES_TOPIC_ID = process.env.RULES_TOPIC_ID;
 
-  const rulesMessage = `
-📜 Group Rules:
-1. Be respectful
-2. No spam
-3. Stay on topic
+bot.onText(/\/rules/, (msg) => {
+  const userId = msg.from.id;
+  const username = msg.from.username ? `@${msg.from.username}` : msg.from.first_name;
 
-Please react ✅ below within 1 minute to agree, or you will be removed.
-  `;
-
-  await ctx.reply(rulesMessage, {
-    reply_markup: {
-      inline_keyboard: [[{ text: '✅ Agree', callback_data: `agree:${userId}` }]]
+  bot.sendMessage(
+    CHAT_ID,
+    `📜 Rules:\n1. Be nice\n2. No spam\n3. Follow group guidelines\n\n${username}, please react with 👍 to agree.`,
+    {
+      message_thread_id: Number(RULES_TOPIC_ID), // send inside topic
     }
+  ).then((sentMessage) => {
+    const messageId = sentMessage.message_id;
+
+    // Track reaction timeout
+    setTimeout(() => {
+      // This is just a placeholder since Telegram's Bot API doesn't
+      // natively give "reaction list" yet, so you'd handle this via callback queries
+      // or a custom "Agree" button instead of actual emoji reaction.
+      bot.sendMessage(
+        CHAT_ID,
+        `⏳ ${username} did not react in time and will be removed.`,
+        { message_thread_id: Number(RULES_TOPIC_ID) }
+      );
+
+      bot.kickChatMember(CHAT_ID, userId);
+    }, 60_000);
   });
-
-  // Timer to kick after 1 minute if no agreement
-  const timer = setTimeout(async () => {
-    try {
-      await ctx.kickChatMember(userId);
-      await ctx.reply(`⏱ ${firstName} did not agree in time and was removed.`);
-    } catch (err) {
-      console.error('Kick error:', err);
-    }
-    pendingUsers.delete(userId);
-  }, 60_000);
-
-  pendingUsers.set(userId, timer);
 });
-
-bot.on('callback_query', async (ctx) => {
-  const [action, userId] = ctx.callbackQuery.data.split(':');
-
-  if (action === 'agree') {
-    await ctx.answerCbQuery('✅ You agreed to the rules');
-    await ctx.reply(`Welcome, ${ctx.from.first_name}!`);
-
-    // Clear pending kick timer
-    if (pendingUsers.has(Number(userId))) {
-      clearTimeout(pendingUsers.get(Number(userId)));
-      pendingUsers.delete(Number(userId));
-    }
-  }
-});
-
-export default async function handler(req, res) {
-  try {
-    await bot.handleUpdate(req.body, res);
-    res.status(200).end();
-  } catch (err) {
-    console.error(err);
-    res.status(500).send('Error');
-  }
-}
